@@ -4,7 +4,7 @@ module accretion
 ! use mphys_switches, only: i_m3r, l_3mr
   use mphys_switches, only: i_ql, i_qr, i_nl, l_2mc, &
        l_aacc, i_am4, i_am5, l_process, active_rain, isol, l_preventsmall, &
-       l_prf_cfrac, i_cfl, i_cfr, l_kk00, l_inhomog
+       l_prf_cfrac, i_cfl, i_cfr, l_kk00, l_inhom_rain
   use mphys_constants, only: fixed_cloud_number
   use mphys_parameters, only: hydro_params
 ! use mphys_parameters, only: p1, p2, p3, rain_params
@@ -65,7 +65,7 @@ contains
     real(wp) :: cf_liquid, cf_rain
 
 
-    real(wp) :: mu, n0, lam, bias
+    real(wp) :: mu, n0, lam, bias, acc_l, acc_r
     logical :: l_kk_acw=.true.
 
     integer :: k ! local index for k
@@ -85,6 +85,17 @@ contains
     if ( l_rp2_casim ) then
         fixed_cloud_number = fixed_cloud_number_rp
     endif
+
+    if (l_kk_acw .and. l_inhom_rain) then
+       ! Set exponents to use in the inhomogeneity scheme
+       if (l_kk00) then
+          acc_l = 1.15
+          acc_r = 1.15
+       else
+          acc_l = 1.05
+          acc_r = 0.98
+       end if
+    end if
 
     do k = 1, ubound(qfields,1)
        if (l_prf_cfrac) then
@@ -119,27 +130,30 @@ contains
        
        if (cloud_mass*cf_liquid > ql_small .and. rain_mass*cf_rain > qr_small) then
           if (l_kk_acw) then
-             !        dmass=min(0.9*cloud_mass, 67.0*(cloud_mass*rain_mass)**1.15)
+
              if (l_kk00) then
-                ! Use KK accretion parametrisation but limit to 90% of cloud mass removal
+                ! Use KK accretion parametrisation
                 dmass = 67.0*(cloud_mass*rain_mass)**1.15
-                if (l_inhomog) then
-                  bias = ((1.0+fsd_l(k)**2)**(-0.5*1.15))*                     &
-                       ((1.0+fsd_l(k)**2)**(0.5*1.15**2))*                     &
-                       ((1.0+fsd_r(k)**2)**(-0.5*1.15))*                       &
-                       ((1.0+fsd_r(k)**2)**(0.5*1.15**2))*                     &
-                       exp(c_r_correl*1.15*1.15*                               &
-                       sqrt(log(1.0+fsd_l(k)**2)*                              &
-                       log(1.0+fsd_r(k)**2)))
-                  dmass = dmass * bias
-                end if
-                dmass = MIN(0.9*cloud_mass, dmass)
+
              else
-                ! Use Kogan(2013) accretion parametrisation but limit to 90% 
-                ! of cloud mass removal
-                dmass = min(0.9*cloud_mass, 8.53*(cloud_mass**1.05)*(rain_mass)**0.98)
+                ! Use Kogan(2013) accretion parametrisation
+                dmass = 8.53*(cloud_mass**1.05)*(rain_mass**0.98)
              endif
-             
+
+             if (l_inhom_rain) then
+                ! Enhance accretion to account for correlated sub-grid
+                ! inhomogeneity of the cloud and rain mass
+                bias = ((1.0+fsd_l(k)**2)**(0.5*acc_l*(acc_l-1.0)))*           &
+                       ((1.0+fsd_r(k)**2)**(0.5*acc_r*(acc_r-1.0)))*           &
+                       exp(c_r_correl*acc_l*acc_r*                             &
+                           sqrt(log(1.0+fsd_l(k)**2)*                          &
+                                log(1.0+fsd_r(k)**2)))
+                dmass = dmass * bias
+             end if
+
+             ! Limit to 90% of cloud mass removal
+             dmass = MIN(0.9*cloud_mass/dt, dmass)
+
           else
              n0=dist_n0(k,params%id)
              mu=dist_mu(k,params%id)
