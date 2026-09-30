@@ -67,9 +67,9 @@ contains
 
     if (l_inhom_rain) then
        ! Set exponent to use in the inhomogeneity scheme
-       if (l_kk00) then
+       if (l_kk00) then   ! KK 2000 formula
           aut_l = 2.47
-       else
+       else               ! Kogan 2013 formula
           aut_l = 4.22
        end if
     end if

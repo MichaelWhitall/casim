@@ -353,6 +353,9 @@ module mphys_parameters
   real(wp) :: C1=100.0
   real(wp) :: K1=0.4
 
+  ! Sub-grid inhomogeneity correlation between liquid-cloud and rain mass
+  real(wp) :: c_r_correl=0.0
+
   ! ice-phase
   real(wp) :: nucleated_ice_radius
   real(wp) :: nucleated_ice_mass

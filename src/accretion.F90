@@ -6,7 +6,7 @@ module accretion
        l_aacc, i_am4, i_am5, l_process, active_rain, isol, l_preventsmall, &
        l_prf_cfrac, i_cfl, i_cfr, l_kk00, l_inhom_rain
   use mphys_constants, only: fixed_cloud_number
-  use mphys_parameters, only: hydro_params
+  use mphys_parameters, only: hydro_params, c_r_correl
 ! use mphys_parameters, only: p1, p2, p3, rain_params
   use process_routines, only: process_rate, i_pracw, i_aacw
   use thresholds, only: ql_small, qr_small, cfliq_small
@@ -14,7 +14,6 @@ module accretion
   use distributions, only: dist_lambda, dist_mu, dist_n0
 ! use m3_incs, only: m3_inc_type2
   use casim_stph, only: l_rp2_casim, fixed_cloud_number_rp
-  use mphys_inputs_mod, only: c_r_correl
 
   implicit none
 
