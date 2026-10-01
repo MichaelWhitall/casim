@@ -22,7 +22,8 @@ module micro_main
        l_onlycollect, pswitch, aswitch, l_isub, l_pos1, l_pos2, l_pos3, l_pos4, l_no_pgacs_in_sumprocs, &
        l_pos5, l_pos6, i_hstart, l_tidy_negonly, l_separate_rain,  &
        iopt_act, iopt_shipway_act, l_prf_cfrac, l_kfsm, l_gamma_online, l_subseds_maxv, &
-       i_cfl, i_cfr, i_cfi, i_cfs, i_cfg, l_reisner_graupel_embryo
+       i_cfl, i_cfr, i_cfi, i_cfs, i_cfg, i_fsdl, i_fsdr,                      &
+       l_reisner_graupel_embryo
 ! use mphys_switches, only: l_rain,
   use passive_fields, only: rexner, min_dz
   use mphys_constants, only: cp, Lv
@@ -96,8 +97,9 @@ module micro_main
   real(wp), allocatable :: dqfields(:,:,:), qfields(:,:,:), tend(:,:,:)
   real(wp), allocatable :: daerofields(:,:,:), aerofields(:,:,:), aerosol_tend(:,:,:)
   real(wp), allocatable :: cffields(:,:,:) !cloudfraction fields
+  real(wp), allocatable :: fsdfields(:,:,:) ! Fractional standard deviations
 
-!$OMP THREADPRIVATE(precip, dqfields, qfields, cffields, tend,                   &
+!$OMP THREADPRIVATE(precip, dqfields, qfields, cffields, fsdfields, tend,      &
 !$OMP               daerofields, aerofields, aerosol_tend)
 
   type(process_rate), allocatable :: procs(:,:,:)
@@ -230,6 +232,7 @@ contains
     allocate(tend(nz, nq, nxy_inner))
     allocate(tend_temp(nz,nq))
     allocate(cffields(nz,5, nxy_inner)) !5 'cloud' fractions
+    allocate(fsdfields(nz,2, nxy_inner)) ! FSD for liquid-cloud and rain
     cffields=ZERO_REAL_WP
 
     ! Allocate aerosol storage
@@ -364,6 +367,7 @@ contains
     deallocate(tend_temp)
     deallocate(precondition)
     deallocate(cffields)
+    deallocate(fsdfields)
 
     ! aerosol fields
     if (l_process) call deallocate_procs(nxy_inner, aerosol_procs)
@@ -439,7 +443,9 @@ contains
          , q12( kl:ku, il:iu, jl:ju ), q13( kl:ku, il:iu, jl:ju )
 
     real(wp) :: cfliq(kl:ku, il:iu, jl:ju ), cfrain(kl:ku, il:iu, jl:ju ), cfice(kl:ku, il:iu, jl:ju ), &
-                cfsnow(kl:ku, il:iu, jl:ju ), cfgr(kl:ku, il:iu, jl:ju ), fsd_l(kl:ku), fsd_r(kl:ku)
+                cfsnow(kl:ku, il:iu, jl:ju ), cfgr(kl:ku, il:iu, jl:ju )
+    real(wp), intent(in) :: fsd_l(kl:ku, il:iu, jl:ju),                        &
+                            fsd_r(kl:ku, il:iu, jl:ju)
 
 
 
@@ -576,6 +582,9 @@ contains
           cffields(:,i_cfi,ixy_inner)=cfice(k_start:k_end,i,j)
           cffields(:,i_cfs,ixy_inner)=cfsnow(k_start:k_end,i,j)
           cffields(:,i_cfg,ixy_inner)=cfgr(k_start:k_end,i,j)
+          ! Set sub-grid fractional standard deviation fields
+          fsdfields(:,i_fsdl,ixy_inner) = fsd_l(k_start:k_end,i,j)
+          fsdfields(:,i_fsdr,ixy_inner) = fsd_r(k_start:k_end,i,j)
           ! Set the qfields
           qfields(:, i_qv, ixy_inner)=qv(k_start:k_end,i,j)
           qfields(:, i_th, ixy_inner)=theta(k_start:k_end,i,j)
@@ -669,7 +678,7 @@ contains
             dt, &
             !i , j,
             ! To be calculated so no need anymore
-            qfields, cffields, fsd_l, fsd_r, dqfields, tend, procs &
+            qfields, cffields, fsdfields, dqfields, tend, procs &
             !, precip(i,j)
             , precip &
             , precip_l, precip_r, precip_i, precip_s, precip_g       &
@@ -858,7 +867,7 @@ contains
        , ixy_outer, is_in, js_in, je_in &
        , dt &
        !ix, jy,
-       , qfields, cffields, fsd_l, fsd_r, dqfields, tend &
+       , qfields, cffields, fsdfields, dqfields, tend &
        , procs, precip, precip_l, precip_r, precip_i, precip_s, precip_g      &
        , precip_r1d, precip_s1d, precip_so1d, precip_g1d                      &
        , aerophys, aerochem, aeroact                                          &
@@ -884,7 +893,7 @@ contains
     real(wp), intent(in) :: rhcrit_1d(:)
     real(wp), intent(inout) :: qfields(:,:,:), dqfields(:,:,:), tend(:,:,:)
     real(wp), intent(in) :: cffields(:,:,:)
-    real(wp), intent(in) :: fsd_l(:), fsd_r(:)
+    real(wp), intent(in) :: fsdfields(:,:,:)
 
     type(process_rate), intent(inout) :: procs(:,:,:)
     ! real(wp), intent(out) :: precip
@@ -1209,7 +1218,8 @@ contains
           !-------------------------------
           if (pswitch%l_praut) then
              call raut(ixy_inner, step_length, qfields(:,:,ixy_inner),         &
-               cffields(:,:,ixy_inner), aerofields(:,:,ixy_inner), fsd_l,      &
+               cffields(:,:,ixy_inner), aerofields(:,:,ixy_inner),             &
+               fsdfields(:,i_fsdl,ixy_inner),                                  &
                procs(:,:,ixy_inner), aerosol_procs(:,:,ixy_inner))
           end if
 
@@ -1218,7 +1228,8 @@ contains
           !-------------------------------
           if (pswitch%l_pracw) then
              call racw(ixy_inner, step_length, qfields(:,:,ixy_inner),         &
-               cffields(:,:,ixy_inner), aerofields(:,:,ixy_inner), fsd_l,fsd_r,&
+               cffields(:,:,ixy_inner), aerofields(:,:,ixy_inner),             &
+               fsdfields(:,i_fsdl,ixy_inner), fsdfields(:,i_fsdr,ixy_inner),   &
                procs(:,:,ixy_inner), rain_params, aerosol_procs(:,:,ixy_inner))
           end if
 
