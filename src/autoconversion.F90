@@ -3,7 +3,8 @@ module autoconversion
   use passive_fields, only: rho
   use mphys_switches, only: i_ql, i_qr, i_nl, i_nr, l_2mc, &
        l_2mr, l_aaut, i_am4, i_am5, cloud_params, rain_params, l_process, &
-       l_separate_rain, l_preventsmall, l_prf_cfrac, i_cfl, l_kk00
+       l_separate_rain, l_preventsmall, l_prf_cfrac, i_cfl, l_kk00,            &
+       l_inhom_rain
 ! use mphys_switches, only: m3r, l_3mr
   use mphys_constants, only: fixed_cloud_number
   use mphys_parameters, only: rain_params
@@ -22,7 +23,7 @@ module autoconversion
   public raut
 contains
 
-  subroutine raut(ixy_inner, dt, qfields, cffields, aerofields, procs, aerosol_procs)
+  subroutine raut(ixy_inner, dt, qfields, cffields, aerofields, fsd_l, procs, aerosol_procs)
 
     USE yomhook, ONLY: lhook, dr_hook
     USE parkind1, ONLY: jprb, jpim
@@ -32,7 +33,7 @@ contains
     ! Subroutine arguments
     integer, intent(in) :: ixy_inner
     real(wp), intent(in) :: dt
-    real(wp), intent(in) :: qfields(:,:), aerofields(:,:),    cffields(:,:)
+    real(wp), intent(in) :: qfields(:,:), aerofields(:,:), cffields(:,:), fsd_l(:)
     type(process_rate), intent(inout), target :: procs(:,:)
     type(process_rate), intent(inout), target :: aerosol_procs(:,:)
 
@@ -45,6 +46,7 @@ contains
 !   real(wp) :: k1, k2, k3
     real(wp) :: mu_qc ! < cloud shape parameter (currently only used diagnostically here)
     real(wp) :: cf_liquid
+    real(wp) :: bias, aut_l
 
     integer :: k
     character(len=*), parameter :: RoutineName='RAUT'
@@ -61,6 +63,15 @@ contains
     ! Apply RP scheme
     if ( l_rp2_casim ) then
         fixed_cloud_number = fixed_cloud_number_rp
+    end if
+
+    if (l_inhom_rain) then
+       ! Set exponent to use in the inhomogeneity scheme
+       if (l_kk00) then   ! KK 2000 formula
+          aut_l = 2.47
+       else               ! Kogan 2013 formula
+          aut_l = 4.22
+       end if
     end if
 
    do k = 1, ubound(qfields,1)
@@ -97,7 +108,16 @@ contains
               (cloud_number/1.e6*rho(k,ixy_inner))**(-3.01)
       endif
 
+      if (l_inhom_rain) then
+         ! Enhance autoconversion to account for sub-grid inhomogeneity of the
+         ! cloud mass
+         bias = ((1.0+fsd_l(k)**2)**(0.5*aut_l*(aut_l-1.0)))
+         dmass = dmass * bias
+      end if
+
+      ! Limit to 25% of cloud mass removal
       dmass=min(.25*cloud_mass/dt, dmass)
+
       if (l_preventsmall .and. dmass < qr_small) dmass=0.0
       if (l_2mc) dnumber1=dmass/(cloud_mass/cloud_number)
       mu_qc=min(15.0_wp, (1000.0E6/cloud_number + 2.0))
