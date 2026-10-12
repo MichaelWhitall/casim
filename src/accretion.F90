@@ -4,9 +4,9 @@ module accretion
 ! use mphys_switches, only: i_m3r, l_3mr
   use mphys_switches, only: i_ql, i_qr, i_nl, l_2mc, &
        l_aacc, i_am4, i_am5, l_process, active_rain, isol, l_preventsmall, &
-       l_prf_cfrac, i_cfl, i_cfr, l_kk00
+       l_prf_cfrac, i_cfl, i_cfr, l_kk00, l_inhom_rain
   use mphys_constants, only: fixed_cloud_number
-  use mphys_parameters, only: hydro_params
+  use mphys_parameters, only: hydro_params, c_r_correl
 ! use mphys_parameters, only: p1, p2, p3, rain_params
   use process_routines, only: process_rate, i_pracw, i_aacw
   use thresholds, only: ql_small, qr_small, cfliq_small
@@ -31,7 +31,7 @@ contains
   !> This subroutine calculates increments due to the accretion of
   !> cloud water by rain
   !--------------------------------------------------------------------------- !
-  subroutine racw(ixy_inner, dt, qfields, cffields, aerofields, procs, params, aerosol_procs)
+  subroutine racw(ixy_inner, dt, qfields, cffields, aerofields, fsd_l, fsd_r, procs, params, aerosol_procs)
 
     USE yomhook, ONLY: lhook, dr_hook
     USE parkind1, ONLY: jprb, jpim
@@ -46,6 +46,7 @@ contains
     real(wp), intent(in) :: qfields(:,:)     !< hydrometeor fields
     real(wp), intent(in) :: cffields(:,:)     ! < cloud fractions
     real(wp), intent(in) :: aerofields(:,:)  !< aerosol fields
+    real(wp), intent(in) :: fsd_l(:), fsd_r(:)
     type(process_rate), intent(inout), target :: procs(:,:)         !< hydrometeor process rates
     type(process_rate), intent(inout), target :: aerosol_procs(:,:) !< aerosol process rates
     type(hydro_params), intent(in) :: params !< parameters describing hydrometor size distribution/fallspeeds etc.
@@ -63,7 +64,7 @@ contains
     real(wp) :: cf_liquid, cf_rain
 
 
-    real(wp) :: mu, n0, lam
+    real(wp) :: mu, n0, lam, bias, acc_l, acc_r
     logical :: l_kk_acw=.true.
 
     integer :: k ! local index for k
@@ -83,6 +84,22 @@ contains
     if ( l_rp2_casim ) then
         fixed_cloud_number = fixed_cloud_number_rp
     endif
+
+    if (l_inhom_rain) then
+       ! Set exponents to use in the inhomogeneity scheme
+       if (l_kk_acw) then
+          if (l_kk00) then   ! KK 2000 formula
+             acc_l = 1.15
+             acc_r = 1.15
+          else               ! Kogan 2013 formula
+             acc_l = 1.05
+             acc_r = 0.98
+          end if
+       else                  ! Sweep-out formula
+          acc_l = 1.0
+          acc_r = 1.0
+       end if
+    end if
 
     do k = 1, ubound(qfields,1)
        if (l_prf_cfrac) then
@@ -117,22 +134,40 @@ contains
        
        if (cloud_mass*cf_liquid > ql_small .and. rain_mass*cf_rain > qr_small) then
           if (l_kk_acw) then
-             !        dmass=min(0.9*cloud_mass, 67.0*(cloud_mass*rain_mass)**1.15)
+
              if (l_kk00) then
-                ! Use KK accretion parametrisation but limit to 90% of cloud mass removal
-                dmass = MIN(0.9*cloud_mass, 67.0*(cloud_mass*rain_mass)**1.15)
+                ! Use KK accretion parametrisation
+                dmass = 67.0*(cloud_mass*rain_mass)**1.15
+
              else
-                ! Use Kogan(2013) accretion parametrisation but limit to 90% 
-                ! of cloud mass removal
-                dmass = min(0.9*cloud_mass, 8.53*(cloud_mass**1.05)*(rain_mass)**0.98)
+                ! Use Kogan(2013) accretion parametrisation
+                dmass = 8.53*(cloud_mass**1.05)*(rain_mass**0.98)
              endif
-             
+
           else
              n0=dist_n0(k,params%id)
              mu=dist_mu(k,params%id)
              lam=dist_lambda(k,params%id)
              dmass=sweepout(n0, lam, mu, params, rho(k,ixy_inner))*cloud_mass
           end if
+
+          if (l_inhom_rain) then
+             ! Enhance accretion to account for correlated sub-grid
+             ! inhomogeneity of the cloud and rain mass
+             bias = ((1.0+fsd_l(k)**2)**(0.5*acc_l*(acc_l-1.0)))*              &
+                    ((1.0+fsd_r(k)**2)**(0.5*acc_r*(acc_r-1.0)))*              &
+                    exp(c_r_correl*acc_l*acc_r*                                &
+                        sqrt(log(1.0+fsd_l(k)**2)*                             &
+                             log(1.0+fsd_r(k)**2)))
+             dmass = dmass * bias
+          end if
+
+          ! Limit to 90% of cloud mass removal
+          if (l_kk_acw)  dmass = MIN(0.9*cloud_mass, dmass)
+          ! NOTE: there are 2 things arwy here:
+          ! 1) Why not done for the "sweep-out" accretion option?
+          ! 2) This is comparing process-rate with cloud mass;
+          !    missing a factor of timestep dt to convert rate to increment.
           
           if (l_preventsmall .and. dmass < qr_small) dmass=0.0
           if (l_2mc) dnumber=dmass/(cloud_mass/cloud_number)

@@ -63,6 +63,8 @@ module mphys_switches
   logical :: l_adjust_D0 = .true.  !adjust the psd in distributions
   
   logical :: l_kk00 = .true.  ! true=use KK2000 autoconv+accretion, false=use KK2013
+  logical :: l_inhom_rain = .false.  ! Enhance autoconversion and accretion
+                                     ! due to subgrid inhomogeneity
 
 ! Flag to decide whether to transfer the evaporating aerosol based on whether 
 ! it is less or more than halfway between the sizes of accum and coarse modes
@@ -124,8 +126,11 @@ module mphys_switches
   integer :: i_cfi=3 !ice
   integer :: i_cfs=4 !snow
   integer :: i_cfg=5 !graupel
-  
-  
+
+  ! Sub-grid fractional standard deviation field indices (fixed)
+  integer :: i_fsdl = 1  ! Liquid-cloud
+  integer :: i_fsdr = 2  ! Rain
+
 
   ! information about location indices of different moments
   integer :: i_qstart = 1 ! First index in for q variables (always 1)
